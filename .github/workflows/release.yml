@@ -1,120 +1,54 @@
-name: Release
+  name: Release
 
-on:
-  release:
-    types: [prereleased]
-  push:
-    branches:
-      - main
-      - v*
-      - dev*
-    paths:
-      - "**/*.go"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/*.yml"
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - "**/*.go"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/*.yml"
+  on:
+    release:
+      types: [prereleased, released]
 
-jobs:
-  build:
-    strategy:
-      matrix:
-        goos: [linux]
-        goarch: [amd64, arm64]
-        include:
-          # BEGIN Linux ARM 5 6 7
-          - goos: linux
-            goarch: arm
-            goarm: 7
-          - goos: linux
-            goarch: arm
-            goarm: 6
-          - goos: linux
-            goarch: arm
-            goarm: 5
-          # END Linux ARM 5 6 7
-      fail-fast: false
+  jobs:
+    build:
+      strategy:
+        matrix:
+          goos: [linux]
+          goarch: [amd64, arm64]
+          include:
+            - goos: linux
+              goarch: arm
+              goarm: 7
+            - goos: linux
+              goarch: arm
+              goarm: 6
+            - goos: linux
+              goarch: arm
+              goarm: 5
+        fail-fast: false
 
-    runs-on: ubuntu-22.04
-    env:
-      GOOS: ${{ matrix.goos }}
-      GOARCH: ${{ matrix.goarch }}
-      GOARM: ${{ matrix.goarm }}
-      CGO_ENABLED: 0
+      runs-on: ubuntu-24.04
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        GOARM: ${{ matrix.goarm }}
+        CGO_ENABLED: 0
 
-    steps:
-      - name: Checkout codebase
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-      - name: Get the version
-        id: get_version
-        env:
-          REF: ${{ github.ref }}
-        run: |
-          if [[ "$REF" == "refs/tags/v"* ]]; then
-            tag=$(git describe --tags $(git rev-list --tags --max-count=1))
-            version=${tag}
-          else
-            date=$(git log -1 --format="%cd" --date=short | sed s/-//g)
-            count=$(git rev-list --count HEAD)
-            commit=$(git rev-parse --short HEAD)
-            version="test-$date.r${count}.$commit"
-          fi
-          echo ::set-output name=VERSION::"$version"
-          echo "VERSION=$version" >> $GITHUB_ENV
+      steps:
+        - uses: actions/checkout@v4
 
-      - name: Show workflow information
-        id: get_filename
-        run: |
-          export _NAME=$(jq ".[\"$GOOS-$GOARCH$GOARM\"].friendlyName" -r < release/friendly-filenames.json)
-          echo "GOOS: $GOOS, GOARCH: $GOARCH, RELEASE_NAME: $_NAME"
-          echo "::set-output name=ASSET_NAME::$_NAME"
-          echo "ASSET_NAME=$_NAME" >> $GITHUB_ENV
-      - name: Set up Go
-        uses: actions/setup-go@v2
-        with:
-          stable: true
-          go-version: '1.18'
+        - name: Setup Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: '1.24'
 
-      - name: Get project dependencies
-        run: go mod download
+        - run: go mod download
 
-      - name: Build gg
-        run: |
-          go build -v -o gg-$ASSET_NAME -trimpath -ldflags "-X github.com/mzz2017/gg/cmd.Version=${{ steps.get_version.outputs.VERSION }} -s -w -buildid=" .
-          upx gg-$ASSET_NAME
-      
-      - name: Smoking test
-        if: matrix.goarch == 'amd64'
-        run: ./gg-$ASSET_NAME --version
+        - name: Build
+          run: |
+            export _NAME=$(jq ".[\"$GOOS-$GOARCH$GOARM\"].friendlyName" -r < release/friendly-filenames.json)
+            go build -tags "with_quic,with_utls" -v -o gg-$_NAME -trimpath -ldflags "-s -w -buildid=" .
 
-      - name: Signature
-        run: |
-          FILE=./gg-$ASSET_NAME
-          DGST=$FILE.dgst
-          openssl dgst -md5    $FILE | sed 's/([^)]*)//g' >>$DGST
-          openssl dgst -sha1   $FILE | sed 's/([^)]*)//g' >>$DGST
-          openssl dgst -sha256 $FILE | sed 's/([^)]*)//g' >>$DGST
-          openssl dgst -sha512 $FILE | sed 's/([^)]*)//g' >>$DGST
-      - name: Upload files to Artifacts
-        uses: actions/upload-artifact@v2
-        with:
-          name: gg-${{ steps.get_filename.outputs.ASSET_NAME }}
-          path: gg-${{ steps.get_filename.outputs.ASSET_NAME }}
-
-      - name: Upload files to GitHub release
-        uses: svenstaro/upload-release-action@v2
-        if: github.event_name == 'release'
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file_glob: true
-          file: ./gg-${{ steps.get_filename.outputs.ASSET_NAME }}*
-          overwrite: true
-          tag: ${{ github.ref }}
+        - name: Upload to Release
+          uses: svenstaro/upload-release-action@v2
+          with:
+            repo_token: ${{ secrets.GITHUB_TOKEN }}
+            file_glob: true
+            file: ./gg-*
+            overwrite: true
+            tag: ${{ github.ref }}
