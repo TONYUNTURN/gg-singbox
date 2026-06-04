@@ -40,12 +40,33 @@ gg python -m pip install torch
 
 ### 安装
 
+**一键安装（推荐）：**
+
 ```bash
-# 从源码编译（需要 Go 1.24+）
+sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
+```
+
+脚本会自动下载适配你架构的预编译二进制（UPX 压缩后约 10MB），安装到 `/usr/local/bin/gg`，并设置所需 Linux 权限。
+
+**手动下载：**
+
+从 [Releases](https://github.com/TONYUNTURN/gg-singbox/releases/latest) 下载对应架构的二进制，然后：
+
+```bash
+chmod +x gg-linux-*
+sudo mv gg-linux-* /usr/local/bin/gg
+sudo setcap cap_net_raw,cap_sys_ptrace+ep /usr/local/bin/gg
+```
+
+**从源码编译（需要 Go 1.24+）：**
+
+```bash
 CGO_ENABLED=0 go build -tags "with_quic,with_utls" -ldflags="-s -w" -o gg .
 sudo setcap cap_net_raw,cap_sys_ptrace+ep ./gg
 sudo mv ./gg /usr/local/bin/gg
 ```
+
+> 💡 预编译二进制使用 [UPX](https://upx.github.io/) 压缩，体积从 ~31MB 降至 ~10MB。
 
 ### 使用方法
 

@@ -40,12 +40,33 @@ This project is a **modernized fork** of [mzz2017/gg](https://github.com/mzz2017
 
 ### Install
 
+**One-line install (recommended):**
+
 ```bash
-# Build from source (Go 1.24+)
+sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
+```
+
+This downloads a pre-built binary (~10MB after UPX compression) for your architecture (x86_64 / arm64 / armv5-7), installs to `/usr/local/bin/gg`, and sets the required Linux capabilities.
+
+**Manual download:**
+
+Download the latest binary from [Releases](https://github.com/TONYUNTURN/gg-singbox/releases/latest), then:
+
+```bash
+chmod +x gg-linux-*
+sudo mv gg-linux-* /usr/local/bin/gg
+sudo setcap cap_net_raw,cap_sys_ptrace+ep /usr/local/bin/gg
+```
+
+**Build from source (Go 1.24+):**
+
+```bash
 CGO_ENABLED=0 go build -tags "with_quic,with_utls" -ldflags="-s -w" -o gg .
 sudo setcap cap_net_raw,cap_sys_ptrace+ep ./gg
 sudo mv ./gg /usr/local/bin/gg
 ```
+
+> 💡 The pre-built binaries are compressed with [UPX](https://upx.github.io/), reducing size from ~31MB to ~10MB.
 
 ### Usage
 
