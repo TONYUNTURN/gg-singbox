@@ -44,6 +44,13 @@
             export _NAME=$(jq ".[\"$GOOS-$GOARCH$GOARM\"].friendlyName" -r < release/friendly-filenames.json)
             go build -tags "with_quic,with_utls" -v -o gg-$_NAME -trimpath -ldflags "-s -w -buildid=" .
 
+        - name: Compress with UPX
+           run: |
+            curl -fsSL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz -o /tmp/upx.tar.xz
+            tar -xf /tmp/upx.tar.xz -C /tmp
+            export _NAME=$(jq ".[\"$GOOS-$GOARCH$GOARM\"].friendlyName" -r < release/friendly-filenames.json)
+            /tmp/upx-4.2.4-amd64_linux/upx --best gg-$_NAME
+
         - name: Upload to Release
           uses: svenstaro/upload-release-action@v2
           with:
