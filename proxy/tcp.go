@@ -3,7 +3,7 @@ package proxy
 import (
 	"errors"
 	"fmt"
-	io2 "github.com/mzz2017/softwind/pkg/zeroalloc/io"
+	"io"
 	"net"
 	"net/netip"
 	"time"
@@ -40,14 +40,14 @@ type WriteCloser interface {
 func RelayTCP(lConn, rConn net.Conn) (err error) {
 	eCh := make(chan error, 1)
 	go func() {
-		_, e := io2.Copy(rConn, lConn)
+		_, e := io.Copy(rConn, lConn)
 		if rConn, ok := rConn.(WriteCloser); ok {
 			rConn.CloseWrite()
 		}
 		rConn.SetReadDeadline(time.Now().Add(10 * time.Second))
 		eCh <- e
 	}()
-	_, e := io2.Copy(lConn, rConn)
+	_, e := io.Copy(lConn, rConn)
 	if lConn, ok := lConn.(WriteCloser); ok {
 		lConn.CloseWrite()
 	}

@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/mzz2017/gg/cmd/infra"
+	"github.com/mzz2017/gg/config"
 	"github.com/mzz2017/gg/tracer"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -25,19 +26,15 @@ var (
 	rootCmd = &cobra.Command{
 		Use:   "gg [flags] [command [argument ...]]",
 		Short: "go-graft redirects the traffic of given program to your proxy.",
-		Long: `go-graft is a portable tool to redirect the traffic of a given 
-program to your modern proxy without installing any other programs.`,
+		Long: `go-graft is a portable tool to redirect the traffic of a given
+	program to your modern proxy without installing any other programs.`,
 		Version: Version,
 		Run: func(cmd *cobra.Command, args []string) {
 			program := filepath.Base(os.Args[0])
 			hasSelectFlag, _ := cmd.PersistentFlags().GetBool("select")
-			if len(args) == 0 && !hasSelectFlag {
-				fmt.Println(`No command is given, you can try:
-$ gg --help
-or
-$ gg git clone https://github.com/mzz2017/gg.git`)
-				return
-			}
+			hasNodeFlag, _ := cmd.PersistentFlags().GetString("node")
+			hasSubFlag, _ := cmd.PersistentFlags().GetString("subscription")
+			noCache, _ := cmd.PersistentFlags().GetBool("no-cache")
 
 			// auto su if use 'gg sudo' or 'gg su'
 			if len(os.Args) >= 2 {
@@ -50,7 +47,7 @@ $ gg git clone https://github.com/mzz2017/gg.git`)
 			log := NewLogger(verbose)
 			log.Traceln("Version:", Version)
 			log.Tracef("OS/Arch: %v/%v\n", runtime.GOOS, runtime.GOARCH)
-			v, _ = getConfig(log, true, viper.New, cmd)
+			v, configPath := getConfig(log, true, viper.New, cmd)
 
 			// check ptrace_scope and capability
 			if err := infra.CheckPtraceCapability(); err != nil {
@@ -79,10 +76,73 @@ $ gg git clone https://github.com/mzz2017/gg.git`)
 					logrus.Fatal("exec.LookPath:", err)
 				}
 			}
+
+			// --select without saved subscription: error early
+			if hasSelectFlag && config.ParamsObj.Subscription.Link == "" {
+				logrus.Fatal("No saved subscription. Use 'gg -s <url>' to set one up first.")
+			}
+
+			// No command and no flags: show helpful message
+			if len(args) == 0 && !hasSelectFlag && hasSubFlag == "" {
+				hasConfig := config.ParamsObj.Node != "" || config.ParamsObj.Subscription.Link != ""
+				if hasConfig {
+					nodePreview := config.ParamsObj.Node
+					if nodePreview == "" {
+						nodePreview = config.ParamsObj.Cache.Subscription.LastNode
+					}
+					if len(nodePreview) > 50 {
+						nodePreview = nodePreview[:50] + "..."
+					}
+					fmt.Printf("No command given.\nCurrent node: %s\n\nUsage: gg [command ...]\n", nodePreview)
+				} else {
+					fmt.Println(`No node configured. Set one up first:
+
+  gg -s <subscription-url>     first time setup (select a node)
+  gg -n <share-link>           use a specific node directly
+
+After setup, just run commands directly:
+
+  gg curl ip.sb
+  gg --select                  switch to a different node`)
+				}
+				return
+			}
+
 			// get dialer
 			dialer, err := GetDialer(log)
 			if err != nil {
 				logrus.Fatal("GetDialer:", err)
+			}
+
+			// Auto-save configuration on success (unless --no-cache)
+			if !noCache {
+				settings := v.AllSettings()
+				needSave := false
+
+				if hasSubFlag != "" {
+					// -s <url>: save both subscription and selected node
+					settings["node"] = dialer.Link()
+					settings["subscription.link"] = hasSubFlag
+					settings["subscription.select"] = "first"
+					needSave = true
+				} else if hasSelectFlag {
+					// --select: reselect from saved subscription, save node
+					settings["node"] = dialer.Link()
+					settings["subscription.select"] = "first"
+					needSave = true
+				} else if hasNodeFlag != "" {
+					// -n <link>: save node
+					settings["node"] = dialer.Link()
+					needSave = true
+				}
+
+				if needSave {
+					if err := WriteConfig(settings, configPath); err != nil {
+						log.Warnf("Failed to save config: %v", err)
+					} else {
+						log.Infof("Saved: %s | gg --select to switch", dialer.Name())
+					}
+				}
 			}
 
 			if len(args) == 0 {
@@ -154,11 +214,12 @@ func init() {
 	rootCmd.PersistentFlags().CountVarP(&verbose, "verbose", "v", "verbose (-v, or -vv)")
 
 	rootCmd.PersistentFlags().StringP("node", "n", "", "node share-link of your modern proxy")
-	rootCmd.PersistentFlags().StringP("subscription", "s", "", "subscription-link of your modern proxy")
+	rootCmd.PersistentFlags().StringP("subscription", "s", "", "subscription link (first time setup)")
 	rootCmd.PersistentFlags().Bool("noudp", false, "do not redirect UDP traffic, even though the proxy server supports")
 	rootCmd.PersistentFlags().Bool("proxyprivate", false, "redirect traffic to private address")
 	rootCmd.PersistentFlags().String("testnode", "true", "test the connectivity before connecting to the node")
-	rootCmd.PersistentFlags().Bool("select", false, "manually select the node to connect from the subscription")
+	rootCmd.PersistentFlags().Bool("select", false, "switch node (re-pull from saved subscription)")
+	rootCmd.PersistentFlags().Bool("no-cache", false, "do not save the node for future use (one-shot)")
 	rootCmd.AddCommand(configCmd)
 }
 

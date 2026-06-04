@@ -2,15 +2,14 @@ package proxy
 
 import (
 	"fmt"
-	"github.com/mzz2017/gg/dialer"
-	"github.com/mzz2017/gg/infra/ip_mtu_trie"
-	"github.com/mzz2017/softwind/pool"
-	"github.com/mzz2017/softwind/protocol/shadowsocks"
-	"golang.org/x/net/dns/dnsmessage"
 	"net"
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/mzz2017/gg/dialer"
+	"github.com/mzz2017/gg/infra/ip_mtu_trie"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 const (
@@ -172,14 +171,9 @@ func SelectTimeout(packet []byte) time.Duration {
 	return DnsQueryTimeout
 }
 
-// select an appropriate timeout
+// selectTimeout selects an appropriate timeout for UDP packet.
+// With sing-box, UDP packets are already decrypted, so we just check the DNS payload directly.
 func selectTimeout(packet []byte) time.Duration {
-	al, _ := shadowsocks.BytesSizeForMetadata(packet)
-	if len(packet) < al {
-		// err: packet with inadequate length
-		return DefaultNatTimeout
-	}
-	packet = packet[al:]
 	return SelectTimeout(packet)
 }
 
@@ -236,8 +230,7 @@ func (p *Proxy) GetOrBuildUDPConn(lAddr net.Addr, target string, data []byte) (r
 }
 
 func (p *Proxy) relayUDP(laddr net.Addr, rConn net.PacketConn, timeout time.Duration) (err error) {
-	buf := pool.Get(ip_mtu_trie.MTUTrie.GetMTU(rConn.LocalAddr().(*net.UDPAddr).IP))
-	defer pool.Put(buf)
+	buf := make([]byte, ip_mtu_trie.MTUTrie.GetMTU(rConn.LocalAddr().(*net.UDPAddr).IP))
 	var n int
 	for {
 		p.log.Tracef("readfrom...")

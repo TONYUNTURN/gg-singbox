@@ -27,16 +27,22 @@ type DialerWithLatency struct {
 }
 
 func GetDialer(log *logrus.Logger) (d *dialer.Dialer, err error) {
-	nodeLink := config.ParamsObj.Node
 	opt := &dialer.GlobalOption{
 		AllowInsecure: config.ParamsObj.AllowInsecure,
 	}
-	if len(nodeLink) > 0 {
-		d, err = GetDialerFromLink(nodeLink, opt, config.ParamsObj.TestNode, config.ParamsObj.TestURL)
-		if err != nil {
-			return nil, err
+
+	// When -s or --select is active, force subscription path (skip saved node)
+	forceSub := config.ParamsObj.Subscription.Select == "__select__"
+
+	if !forceSub {
+		nodeLink := config.ParamsObj.Node
+		if len(nodeLink) > 0 {
+			d, err = GetDialerFromLink(nodeLink, opt, config.ParamsObj.TestNode, config.ParamsObj.TestURL)
+			if err != nil {
+				return nil, err
+			}
+			return d, nil
 		}
-		return d, nil
 	}
 	if config.ParamsObj.Subscription.Link != "" {
 		if d, err = GetDialerFromSubscription(log, opt, config.ParamsObj.TestNode, config.ParamsObj.TestURL); err != nil {

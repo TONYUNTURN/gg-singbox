@@ -3,7 +3,6 @@ package proxy
 import (
 	"errors"
 	"github.com/mzz2017/gg/infra/ip_mtu_trie"
-	"github.com/mzz2017/softwind/pool"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
 	"net"
@@ -141,14 +140,13 @@ func (p *Proxy) ListenUDP(addr string) (err error) {
 			p.log.Infof("ReadFrom: %v", err)
 			continue
 		}
-		data := pool.Get(n)
+		data := make([]byte, n)
 		copy(data, buf[:n])
 		go func() {
 			err := p.handleUDP(lAddr, data)
 			if err != nil {
 				p.log.Infof("handleUDP: %v", err)
 			}
-			pool.Put(data)
 		}()
 	}
 }
