@@ -46,11 +46,10 @@ gg python -m pip install torch
 # 国际
 sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
 
-# 国内（自动走镜像，GitHub 不通时回退）
-sudo sh -c "$(curl -fsSL https://ghscript.drumsticktony.online/https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
-```
+	# 国内
+	curl -fsSL https://ghscript.drumsticktony.online/https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh | sudo env GG_MIRROR=1 sh
 
-脚本自动检测架构（x86_64 / arm64 / armv5-7），下载预编译二进制（UPX 压缩后约 10MB），安装到 `/usr/local/bin/gg`，并设置所需 Linux 权限。GitHub 不通时自动回退到镜像。
+	脚本自动检测架构，下载预编译二进制（UPX 压缩后约 10MB）。国内用 `GG_MIRROR=1` 直接走镜像，无需等待超时。
 
 **手动下载：**
 
