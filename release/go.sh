@@ -30,9 +30,12 @@ download_and_install() {
 
   URL="https://github.com/TONYUNTURN/gg-singbox/releases/latest/download/gg-${PLATFORM}-${ARCH}"
   echo "Downloading gg-singbox for ${PLATFORM}-${ARCH}..."
-  if [ "$GG_MIRROR" = "1" ]; then
+
+  if [ "$GG_MIRROR" = "1" ] || [ -n "$GG_MIRROR" ]; then
     curl -fsSL "${MIRROR}/${URL}" -o "${temp_file}"
-  elif ! curl -fsSL "$URL" --connect-timeout 5 -o "${temp_file}" 2>/dev/null; then
+  elif curl -fsSL "$URL" --connect-timeout 5 -o "${temp_file}" 2>/dev/null; then
+    : # direct success
+  else
     warn "Direct download failed, trying mirror..."
     curl -fsSL "${MIRROR}/${URL}" -o "${temp_file}"
   fi
