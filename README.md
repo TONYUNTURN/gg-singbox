@@ -1,10 +1,10 @@
 # gg-singbox
 
-[English](README.md) | [中文](README_zh.md)
+[English](README_en.md)
 
-## What is gg-singbox?
+## gg-singbox 是什么？
 
-`gg` is a command-line transparent proxy tool for Linux. Just prefix any command with `gg` to redirect its traffic through a modern proxy — no heavy installations needed.
+`gg` 是一个 Linux 命令行透明代理工具。在任何命令前面加 `gg`，该命令的流量就会自动走代理——无需安装 v2ray、clash 等重型程序。
 
 ```bash
 gg curl ip.sb
@@ -12,49 +12,49 @@ gg git clone https://github.com/torvalds/linux.git
 gg python -m pip install torch
 ```
 
-## Why gg-singbox?
+## 为什么是 gg-singbox？
 
-This project is a **modernized fork** of [mzz2017/gg](https://github.com/mzz2017/gg) (go-graft). The original `gg` was an elegant ptrace-based transparent proxy supporting multiple protocols. However, it relied on the outdated `softwind` protocol library and lacked support for modern protocols like Shadowsocks 2022, Hysteria2, and VLESS+REALITY.
+本项目是 [mzz2017/gg](https://github.com/mzz2017/gg)（go-graft）的**现代化 fork**。原版 `gg` 是一个优雅的基于 ptrace 的透明代理，支持多种协议。但它依赖的 `softwind` 协议库已停止维护，不支持 Shadowsocks 2022、Hysteria2、VLESS+REALITY 等现代协议。
 
-**gg-singbox** replaces the protocol layer with [sing-box](https://github.com/SagerNet/sing-box), bringing support for the latest proxy protocols while keeping the original lightweight ptrace-based architecture intact.
+**gg-singbox** 将协议层替换为 [sing-box](https://github.com/SagerNet/sing-box)，在保留原版轻量 ptrace 架构的同时，获得最新协议支持。
 
-> 🙏 All credit to [mzz2017](https://github.com/mzz2017) for the original `gg` project — the innovative ptrace-based transparent proxy design and the elegant CLI architecture.
+> 🙏 感谢 [mzz2017](https://github.com/mzz2017) 创造了原版 `gg`——创新的 ptrace 透明代理设计和优雅的 CLI 架构。
 
-## What's New
+## 新特性
 
-| Feature | Original gg | gg-singbox |
+| 特性 | 原版 gg | gg-singbox |
 |---|---|---|
-| Protocol engine | softwind (unmaintained) | sing-box v1.13 |
+| 协议引擎 | softwind（已停止维护） | sing-box v1.13 |
 | SS2022 | ❌ | ✅ |
 | VLESS + REALITY | ❌ | ✅ |
 | Hysteria2 | ❌ | ✅ |
 | TUIC | ❌ | ✅ |
 | Trojan / Trojan-go | ✅ | ✅ |
 | VMess (AEAD) | ✅ | ✅ |
-| Shadowsocks | ✅ (legacy only) | ✅ (legacy + 2022) |
-| Simple one-line setup | ❌ | ✅ auto-save after `-s` |
-| `--select` to switch nodes | ❌ | ✅ |
-| `--no-cache` one-shot mode | ❌ | ✅ |
+| Shadowsocks | ✅（仅旧版） | ✅（旧版 + 2022） |
+| 一键配置持久化 | ❌ | ✅ `-s` 后自动保存 |
+| `--select` 切换节点 | ❌ | ✅ |
+| `--no-cache` 一次性模式 | ❌ | ✅ |
 
-## Quick Start
+## 快速开始
 
-### Install
+### 安装
 
-**One-line install (recommended):**
+**一键安装（推荐）：**
 
 ```bash
-# International
+# 国际
 sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
 
-# China (auto-fallback via mirror)
+# 国内（自动走镜像，GitHub 不通时回退）
 sudo sh -c "$(curl -fsSL https://ghscript.drumsticktony.online/https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
 ```
 
-The script auto-detects your architecture (x86_64 / arm64 / armv5-7), downloads a pre-built binary (~10MB after UPX compression), installs to `/usr/local/bin/gg`, and sets the required Linux capabilities. If GitHub is unreachable, it falls back to the mirror automatically.
+脚本自动检测架构（x86_64 / arm64 / armv5-7），下载预编译二进制（UPX 压缩后约 10MB），安装到 `/usr/local/bin/gg`，并设置所需 Linux 权限。GitHub 不通时自动回退到镜像。
 
-**Manual download:**
+**手动下载：**
 
-Download the latest binary from [Releases](https://github.com/TONYUNTURN/gg-singbox/releases/latest), then:
+从 [Releases](https://github.com/TONYUNTURN/gg-singbox/releases/latest) 下载对应架构的二进制，然后：
 
 ```bash
 chmod +x gg-linux-*
@@ -62,7 +62,7 @@ sudo mv gg-linux-* /usr/local/bin/gg
 sudo setcap cap_net_raw,cap_sys_ptrace+ep /usr/local/bin/gg
 ```
 
-**Build from source (Go 1.24+):**
+**从源码编译（需要 Go 1.24+）：**
 
 ```bash
 CGO_ENABLED=0 go build -tags "with_quic,with_utls" -ldflags="-s -w" -o gg .
@@ -70,37 +70,37 @@ sudo setcap cap_net_raw,cap_sys_ptrace+ep ./gg
 sudo mv ./gg /usr/local/bin/gg
 ```
 
-> 💡 The pre-built binaries are compressed with [UPX](https://upx.github.io/), reducing size from ~31MB to ~10MB.
+> 💡 预编译二进制使用 [UPX](https://upx.github.io/) 压缩，体积从 ~31MB 降至 ~10MB。
 
-### Usage
+### 使用方法
 
 ```bash
-# First time setup
-gg -s https://your-subscription-url     # pull subscription, interactive select, auto-save
+# 首次配置
+gg -s https://你的订阅地址           # 拉订阅 → 交互式选择 → 自动保存
 
-# Daily use (no flags needed!)
+# 日常使用（无需任何 flag！）
 gg curl ip.sb
 gg git clone https://github.com/...
 
-# Switch node
-gg --select                              # re-pull subscription and pick a different node
+# 切换节点
+gg --select                          # 重新拉订阅并选择不同节点
 
-# Quick one-shot (auto-saves by default)
-gg -n hysteria2://password@server:port curl ip.sb
+# 直接指定节点（默认自动保存）
+gg -n hysteria2://密码@服务器:端口 curl ip.sb
 
-# One-shot without saving
+# 一次性使用（不保存）
 gg -n ss://... --no-cache curl ip.sb
 
-# Proxy entire shell session
+# 代理整个 shell 会话
 gg bash
 ```
 
-## Supported Protocols
+## 支持的协议
 
-| Protocol | URL Scheme | Notes |
+| 协议 | URL Scheme | 备注 |
 |---|---|---|
-| Shadowsocks 2022 | `ss://` | Method starting with `2022-` |
-| VLESS + REALITY | `vless://` | Vision flow, uTLS fingerprint |
+| Shadowsocks 2022 | `ss://` | method 以 `2022-` 开头 |
+| VLESS + REALITY | `vless://` | 支持 Vision flow、uTLS 指纹 |
 | VMess (AEAD) | `vmess://` | |
 | Trojan / Trojan-go | `trojan://` | |
 | Hysteria2 | `hysteria2://` `hy2://` | |
@@ -108,30 +108,30 @@ gg bash
 | SOCKS5 | `socks5://` | |
 | HTTP | `http://` `https://` | |
 
-## How It Works
+## 工作原理
 
-`gg` uses Linux `ptrace` to intercept network syscalls (connect, sendto) of the target process, redirecting them to a local transparent proxy. The proxy, backed by sing-box, encrypts and forwards traffic through the selected outbound node.
+`gg` 使用 Linux `ptrace` 拦截目标进程的网络系统调用（connect、sendto），将其重定向到本地透明代理。代理由 sing-box 驱动，对流量加密后通过选定的出站节点转发。
 
 ```
 gg curl google.com
-  → ptrace intercepts curl's connect()
-  → redirects to local proxy (loopback)
-  → local proxy dials through sing-box outbound
-  → sing-box encrypts & tunnels to remote server
+  → ptrace 拦截 curl 的 connect()
+  → 重定向到本地代理（loopback）
+  → 本地代理通过 sing-box 出站拨号
+  → sing-box 加密并隧道传输至远程服务器
 ```
 
-## Requirements
+## 系统要求
 
-- Linux (amd64, arm64, arm)
-- `ptrace_scope` ≤ 1 (or `CAP_SYS_PTRACE` capability)
-- Root or `sudo setcap cap_net_raw,cap_sys_ptrace+ep ./gg`
+- Linux（amd64、arm64、arm）
+- `ptrace_scope` ≤ 1（或 `CAP_SYS_PTRACE` 权限）
+- Root 或 `sudo setcap cap_net_raw,cap_sys_ptrace+ep ./gg`
 
-## Credits
+## 致谢
 
-- [mzz2017/gg](https://github.com/mzz2017/gg) — original project, ptrace architecture, CLI design
-- [SagerNet/sing-box](https://github.com/SagerNet/sing-box) — universal proxy platform
-- [hmgle/graftcp](https://github.com/hmgle/graftcp) — original inspiration
+- [mzz2017/gg](https://github.com/mzz2017/gg) — 原版项目，ptrace 架构、CLI 设计
+- [SagerNet/sing-box](https://github.com/SagerNet/sing-box) — 通用代理平台
+- [hmgle/graftcp](https://github.com/hmgle/graftcp) — 灵感来源
 
-## License
+## 许可证
 
-AGPLv3 — same as the original project.
+AGPLv3 — 与原版项目一致。
