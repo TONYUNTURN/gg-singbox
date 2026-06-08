@@ -106,7 +106,7 @@ func GetDialerFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, tes
 			}()
 		}
 		log.Infoln("Pulling the subscription...")
-		dialers, err := pullDialersFromSubscription(log, opt, config.ParamsObj.Subscription.Link)
+		dialers, err := pullDialersFromSubscription(log, opt, config.ParamsObj.Subscription.Link, getProxyDialerForSubscription(opt))
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +148,7 @@ func GetDialerFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, tes
 			}()
 		}
 		log.Infoln("Pulling the subscription...")
-		dialers, err := pullDialersFromSubscription(log, opt, config.ParamsObj.Subscription.Link)
+			dialers, err := pullDialersFromSubscription(log, opt, config.ParamsObj.Subscription.Link, getProxyDialerForSubscription(opt))
 		if err != nil {
 			return nil, err
 		}
@@ -305,4 +305,18 @@ func selectNodeFromInput(nodes []*DialerWithLatency) (*DialerWithLatency, error)
 		return nil, err
 	}
 	return nodes[i], nil
+}
+
+// getProxyDialerForSubscription returns a dialer from the cached node
+// to proxy the subscription fetch request. Returns nil if no cache available.
+func getProxyDialerForSubscription(opt *dialer.GlobalOption) *dialer.Dialer {
+	link := config.ParamsObj.Cache.Subscription.LastNode
+	if link == "" {
+		link = config.ParamsObj.Node
+	}
+	if link == "" {
+		return nil
+	}
+	d, _ := GetDialerFromLink(link, opt, false, "")
+	return d
 }

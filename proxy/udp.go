@@ -230,7 +230,13 @@ func (p *Proxy) GetOrBuildUDPConn(lAddr net.Addr, target string, data []byte) (r
 }
 
 func (p *Proxy) relayUDP(laddr net.Addr, rConn net.PacketConn, timeout time.Duration) (err error) {
-	buf := make([]byte, ip_mtu_trie.MTUTrie.GetMTU(rConn.LocalAddr().(*net.UDPAddr).IP))
+	var mtuIP net.IP
+	if udpAddr, ok := rConn.LocalAddr().(*net.UDPAddr); ok {
+		mtuIP = udpAddr.IP
+	} else {
+		mtuIP = net.IPv4zero
+	}
+	buf := make([]byte, ip_mtu_trie.MTUTrie.GetMTU(mtuIP))
 	var n int
 	for {
 		p.log.Tracef("readfrom...")

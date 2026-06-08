@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/mzz2017/gg/common"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ClashConfig struct {
@@ -114,8 +116,21 @@ func resolveSubscriptionAsSIP008(log *logrus.Logger, opt *dialer.GlobalOption, b
 	return
 }
 
-func pullDialersFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, subscription string) (dialers []*dialer.Dialer, err error) {
-	resp, err := http.Get(subscription)
+func pullDialersFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, subscription string, proxyDialer *dialer.Dialer) (dialers []*dialer.Dialer, err error) {
+	var client *http.Client
+	if proxyDialer != nil {
+		client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return proxyDialer.Dial(network, addr)
+				},
+			},
+			Timeout: 30 * time.Second,
+		}
+	} else {
+		client = http.DefaultClient
+	}
+	resp, err := client.Get(subscription)
 	if err != nil {
 		return nil, err
 	}
