@@ -3,6 +3,8 @@
 YELLOW="$(tput setaf 3 2>/dev/null || printf '')"
 NO_COLOR="$(tput sgr0 2>/dev/null || printf '')"
 
+MIRROR="https://ghscript.drumsticktony.online"
+
 warn() {
   printf '%s\n' "${YELLOW}! $*${NO_COLOR}"
 }
@@ -25,8 +27,13 @@ download_and_install() {
   set -e
   temp_file=$(mktemp /tmp/gg.XXXXXXXXX)
   trap "rm -f '$temp_file'" exit
+
+  URL="https://github.com/TONYUNTURN/gg-singbox/releases/latest/download/gg-${PLATFORM}-${ARCH}"
   echo "Downloading gg-singbox for ${PLATFORM}-${ARCH}..."
-  curl -fsSL "https://github.com/TONYUNTURN/gg-singbox/releases/latest/download/gg-${PLATFORM}-${ARCH}" -o "${temp_file}"
+  if ! curl -fsSL "$URL" -o "${temp_file}" 2>/dev/null; then
+    warn "Direct download failed, trying mirror..."
+    curl -fsSL "${MIRROR}/${URL}" -o "${temp_file}"
+  fi
 
   if touch /usr/local/bin/gg > /dev/null 2>&1; then
     bin_dir=/usr/local/bin

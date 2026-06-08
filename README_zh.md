@@ -43,10 +43,14 @@ gg python -m pip install torch
 **一键安装（推荐）：**
 
 ```bash
+# 国际
 sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
+
+# 国内（自动走镜像，GitHub 不通时回退）
+sudo sh -c "$(curl -fsSL https://ghscript.drumsticktony.online/https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
 ```
 
-脚本会自动下载适配你架构的预编译二进制（UPX 压缩后约 10MB），安装到 `/usr/local/bin/gg`，并设置所需 Linux 权限。
+脚本自动检测架构（x86_64 / arm64 / armv5-7），下载预编译二进制（UPX 压缩后约 10MB），安装到 `/usr/local/bin/gg`，并设置所需 Linux 权限。GitHub 不通时自动回退到镜像。
 
 **手动下载：**
 
