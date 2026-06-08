@@ -46,11 +46,11 @@ This project is a **modernized fork** of [mzz2017/gg](https://github.com/mzz2017
 # International
 sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
 
-# China (auto-fallback via mirror)
-sudo sh -c "$(curl -fsSL https://ghscript.drumsticktony.online/https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh)"
+# China
+curl -fsSL https://ghscript.drumsticktony.online/https://raw.githubusercontent.com/TONYUNTURN/gg-singbox/main/release/go.sh | sudo env GG_MIRROR=1 sh
 ```
 
-	The script auto-detects your architecture (x86_64 / arm64 / armv5-7), downloads a pre-built binary (~10MB after UPX compression), installs to `/usr/local/bin/gg`, and sets the required Linux capabilities. Use `GG_MIRROR=1` in China to skip the direct GitHub attempt.
+The script auto-detects your architecture, downloads a pre-built binary (~10MB after UPX compression), installs to `/usr/local/bin/gg`, and sets the required Linux capabilities. Use `GG_MIRROR=1` in China to skip the direct GitHub attempt.
 
 **Manual download:**
 
