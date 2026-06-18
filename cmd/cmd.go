@@ -93,7 +93,7 @@ var (
 					if len(nodePreview) > 50 {
 						nodePreview = nodePreview[:50] + "..."
 					}
-					fmt.Printf("No command given.\nCurrent node: %s\n\nUsage: gg [command ...]\n", nodePreview)
+					fmt.Printf("gg version %s\nNo command given.\nCurrent node: %s\n\nUsage: gg [command ...]\n", Version, nodePreview)
 				} else {
 					fmt.Println(`No node configured. Set one up first:
 
