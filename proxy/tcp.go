@@ -44,14 +44,14 @@ func RelayTCP(lConn, rConn net.Conn) (err error) {
 		if rConn, ok := rConn.(WriteCloser); ok {
 			rConn.CloseWrite()
 		}
-		rConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		rConn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		eCh <- e
 	}()
 	_, e := io.Copy(lConn, rConn)
 	if lConn, ok := lConn.(WriteCloser); ok {
 		lConn.CloseWrite()
 	}
-	lConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	lConn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	if e != nil {
 		<-eCh
 		return e
