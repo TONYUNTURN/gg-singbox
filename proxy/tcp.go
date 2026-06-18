@@ -37,15 +37,17 @@ type WriteCloser interface {
 }
 
 func RelayTCP(lConn, rConn net.Conn) (err error) {
+	// 256KB buffer for high-latency proxy connections
+	buf := make([]byte, 256*1024)
 	eCh := make(chan error, 1)
 	go func() {
-		_, e := io.Copy(rConn, lConn)
+		_, e := io.CopyBuffer(rConn, lConn, buf)
 		if rConn, ok := rConn.(WriteCloser); ok {
 			rConn.CloseWrite()
 		}
 		eCh <- e
 	}()
-	_, e := io.Copy(lConn, rConn)
+	_, e := io.CopyBuffer(lConn, rConn, buf)
 	if lConn, ok := lConn.(WriteCloser); ok {
 		lConn.CloseWrite()
 	}
