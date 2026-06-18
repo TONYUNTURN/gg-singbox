@@ -50,7 +50,7 @@ download_and_install() {
 
   if [ "$GG_MIRROR" = "1" ]; then
     curl -# -fSL "${MIRROR}/${URL}" -o "${temp_file}"
-  elif curl -# -fSL "$URL" --connect-timeout 5 -o "${temp_file}" 2>/dev/null; then
+  elif curl -# -fSL "$URL" --connect-timeout 5 --max-time 8 -o "${temp_file}" 2>/dev/null; then
     :
   else
     warn "GitHub unreachable, switching to mirror..."
