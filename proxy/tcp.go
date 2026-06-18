@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strings"
 )
 
 func (p *Proxy) handleTCP(conn net.Conn) error {
@@ -22,9 +23,14 @@ func (p *Proxy) handleTCP(conn net.Conn) error {
 	}
 	defer c.Close()
 	if err = RelayTCP(conn, c); err != nil {
+		// ignore benign connection termination signals
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) ||
+			strings.Contains(err.Error(), "broken pipe") {
+			return nil
+		}
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
-			return nil // ignore i/o timeout
+			return nil
 		}
 		return fmt.Errorf("handleTCP relay error: %w", err)
 	}
