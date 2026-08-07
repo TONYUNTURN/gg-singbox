@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"strings"
@@ -25,7 +27,14 @@ type HijackResp struct {
 }
 
 func (p *Proxy) handleUDP(lAddr net.Addr, data []byte) (err error) {
-	loopback, _ := netip.AddrFromSlice(lAddr.(*net.UDPAddr).IP)
+	udpAddr, ok := lAddr.(*net.UDPAddr)
+	if !ok || udpAddr == nil {
+		return fmt.Errorf("invalid UDP source address: %v", lAddr)
+	}
+	loopback, ok := netip.AddrFromSlice(udpAddr.IP)
+	if !ok {
+		return fmt.Errorf("invalid UDP source IP: %v", udpAddr.IP)
+	}
 	tgt := p.GetProjection(loopback)
 	if tgt == "" {
 		return fmt.Errorf("mapped target address not found: %v", loopback)
@@ -36,19 +45,19 @@ func (p *Proxy) handleUDP(lAddr net.Addr, data []byte) (err error) {
 			switch hijackResp.Type {
 			case dnsmessage.TypeAAAA:
 				// TODO: support to restore INET6 ICMP target
-				_, err = p.udpConn.WriteTo(hijackResp.Resp, lAddr)
+				_, err = p.writeToClient(hijackResp.Resp, lAddr)
 				return err
 			case dnsmessage.TypeA:
-				respData, respMsg, e := forwardDNSMessage(tgt, data)
+				respData, respMsg, e := p.forwardDNSMessage(tgt, data)
 				if e != nil {
 					p.log.Tracef("will not restore INET4 ICMP target: forwardDNSMessage: %v", e)
-					_, err = p.udpConn.WriteTo(hijackResp.Resp, lAddr)
+					_, err = p.writeToClient(hijackResp.Resp, lAddr)
 					return err
 				}
 				if len(respMsg.Answers) == 0 {
 					// no answer
 					p.log.Tracef("tgt dns response with no answer")
-					_, err = p.udpConn.WriteTo(respData, lAddr)
+					_, err = p.writeToClient(respData, lAddr)
 					return err
 				}
 				// we only pick the first A answer
@@ -68,7 +77,7 @@ func (p *Proxy) handleUDP(lAddr net.Addr, data []byte) (err error) {
 					p.realIPMapper.Set(hijackResp.AnsIP, ip)
 					p.log.Tracef("fakeIP:(%v) realIP:(%v)", hijackResp.AnsIP, ip)
 				}
-				_, err = p.udpConn.WriteTo(hijackResp.Resp, lAddr)
+				_, err = p.writeToClient(hijackResp.Resp, lAddr)
 				return err
 			}
 			// TODO: try to send from original address if the socket uses bind.
@@ -78,11 +87,11 @@ func (p *Proxy) handleUDP(lAddr net.Addr, data []byte) (err error) {
 		// is other DNS request type
 		if d, ok := p.dialer.(*dialer.Dialer); ok && !d.SupportUDP() {
 			// bypass
-			respData, _, err := forwardDNSMessage(tgt, data)
+			respData, _, err := p.forwardDNSMessage(tgt, data)
 			if err != nil {
 				return fmt.Errorf("forwardDNSMessage: %w", err)
 			}
-			_, err = p.udpConn.WriteTo(respData, lAddr)
+			_, err = p.writeToClient(respData, lAddr)
 			return err
 		}
 		// continue to forward DNS request but use replaced DNS server.
@@ -91,17 +100,23 @@ func (p *Proxy) handleUDP(lAddr net.Addr, data []byte) (err error) {
 	if d, ok := p.dialer.(*dialer.Dialer); ok && !d.SupportUDP() {
 		return fmt.Errorf("receive an unexpected UDP request to target %v: dialer does not support UDP", tgt)
 	}
-	rc, err := p.GetOrBuildUDPConn(lAddr, tgt, data)
-	if err != nil {
-		return fmt.Errorf("auth fail from: %v: %w", lAddr.String(), err)
-	}
 	targetAddr, err := net.ResolveUDPAddr("udp", tgt)
 	if err != nil {
 		return err
 	}
+	rc, session, connIdent, err := p.getOrBuildUDPConn(lAddr, tgt, targetAddr, data)
+	if err != nil {
+		return fmt.Errorf("auth fail from: %v: %w", lAddr.String(), err)
+	}
 	//p.log.Tracef("writeto: %v, %v", targetAddr, data)
-	if _, err = rc.WriteTo(data, targetAddr); err != nil {
+	var n int
+	if n, err = rc.WriteTo(data, targetAddr); err != nil {
+		p.nm.RemoveIf(connIdent, session)
 		return fmt.Errorf("write error: %w", err)
+	}
+	if n != len(data) {
+		p.nm.RemoveIf(connIdent, session)
+		return fmt.Errorf("write error: %w", io.ErrShortWrite)
 	}
 	return nil
 }
@@ -179,95 +194,230 @@ func selectTimeout(packet []byte) time.Duration {
 
 // GetOrBuildUDPConn get a UDP conn from the mapping.
 func (p *Proxy) GetOrBuildUDPConn(lAddr net.Addr, target string, data []byte) (rc net.PacketConn, err error) {
-	var conn *UDPConn
-	var ok bool
-
-	connIdent := lAddr.String()
-	p.nm.Lock()
-	if conn, ok = p.nm.Get(connIdent); !ok {
-		// not exist such socket mapping, build one
-		p.nm.Insert(connIdent, nil)
-		p.nm.Unlock()
-
-		// dial
-		c, err := p.dialer.Dial("udp", target)
-		if err != nil {
-			p.nm.Lock()
-			p.nm.Remove(connIdent) // close channel to inform that establishment ends
-			p.nm.Unlock()
-			return nil, fmt.Errorf("GetOrBuildUDPConn dial error: %w", err)
-		}
-		rc = c.(net.PacketConn)
-		p.nm.Lock()
-		p.nm.Remove(connIdent) // close channel to inform that establishment ends
-		conn = p.nm.Insert(connIdent, rc)
-		conn.Timeout = selectTimeout(data)
-		p.nm.Unlock()
-		// relay
-		go func() {
-			if e := p.relayUDP(lAddr, rc, conn.Timeout); e != nil {
-				p.log.Tracef("shadowsocks.udp.relay: %v", e)
-			}
-			p.nm.Lock()
-			p.nm.Remove(connIdent)
-			p.nm.Unlock()
-		}()
-	} else {
-		// such socket mapping exists; just verify or wait for its establishment
-		p.nm.Unlock()
-		<-conn.Establishing
-		if conn.PacketConn == nil {
-			// establishment ended and retrieve the result
-			return p.GetOrBuildUDPConn(lAddr, target, data)
-		} else {
-			// establishment succeeded
-			rc = conn.PacketConn
-		}
+	targetAddr, err := net.ResolveUDPAddr("udp", target)
+	if err != nil {
+		return nil, err
 	}
-	// countdown
-	_ = conn.PacketConn.SetReadDeadline(time.Now().Add(conn.Timeout))
-	return rc, nil
+	rc, _, _, err = p.getOrBuildUDPConn(lAddr, target, targetAddr, data)
+	return rc, err
 }
 
-func (p *Proxy) relayUDP(laddr net.Addr, rConn net.PacketConn, timeout time.Duration) (err error) {
-	var mtuIP net.IP
-	if udpAddr, ok := rConn.LocalAddr().(*net.UDPAddr); ok {
-		mtuIP = udpAddr.IP
+func (p *Proxy) getOrBuildUDPConn(lAddr net.Addr, target string, targetAddr *net.UDPAddr, data []byte) (net.PacketConn, *UDPConn, string, error) {
+	connIdent := lAddr.String()
+	p.nm.Lock()
+	conn, exists := p.nm.Get(connIdent)
+	if !exists {
+		conn = p.nm.Insert(connIdent, nil)
 	} else {
-		mtuIP = net.IPv4zero
+		conn.waiters++
 	}
-	buf := make([]byte, ip_mtu_trie.MTUTrie.GetMTU(mtuIP))
+	p.nm.Unlock()
+
+	if exists {
+		select {
+		case <-conn.Establishing:
+		case <-p.closed:
+			p.decrementUDPWaiter(conn)
+			return nil, conn, connIdent, ErrProxyClosed
+		}
+		p.decrementUDPWaiter(conn)
+		if conn.Err != nil {
+			return nil, conn, connIdent, conn.Err
+		}
+		if conn.PacketConn == nil {
+			return nil, conn, connIdent, errors.New("UDP session initialized without a connection")
+		}
+		if err := conn.PacketConn.SetReadDeadline(time.Now().Add(conn.Timeout)); err != nil {
+			p.nm.RemoveIf(connIdent, conn)
+			return nil, conn, connIdent, fmt.Errorf("set UDP session deadline: %w", err)
+		}
+		return conn.PacketConn, conn, connIdent, nil
+	}
+
+	p.lifecycleMu.Lock()
+	if p.closing {
+		p.lifecycleMu.Unlock()
+		p.failUDPInitialization(connIdent, conn, ErrProxyClosed)
+		return nil, conn, connIdent, ErrProxyClosed
+	}
+	p.wg.Add(1)
+	p.lifecycleMu.Unlock()
+	relayOwnsRegistration := false
+	defer func() {
+		if !relayOwnsRegistration {
+			p.wg.Done()
+		}
+	}()
+
+	c, err := p.dialContext(p.ctx, "udp", target)
+	if err != nil {
+		err = fmt.Errorf("GetOrBuildUDPConn dial error: %w", err)
+		p.failUDPInitialization(connIdent, conn, err)
+		return nil, conn, connIdent, err
+	}
+	rc, ok := c.(net.PacketConn)
+	if !ok {
+		_ = c.Close()
+		err = errors.New("GetOrBuildUDPConn dial result does not implement net.PacketConn")
+		p.failUDPInitialization(connIdent, conn, err)
+		return nil, conn, connIdent, err
+	}
+
+	p.lifecycleMu.Lock()
+	if p.closing {
+		p.lifecycleMu.Unlock()
+		_ = rc.Close()
+		p.failUDPInitialization(connIdent, conn, ErrProxyClosed)
+		return nil, conn, connIdent, ErrProxyClosed
+	}
+	p.lifecycleMu.Unlock()
+
+	p.nm.Lock()
+	current, currentExists := p.nm.Get(connIdent)
+	if !currentExists || current != conn {
+		p.nm.Unlock()
+		_ = rc.Close()
+		conn.close(ErrProxyClosed)
+		return nil, conn, connIdent, ErrProxyClosed
+	}
+	conn.Timeout = p.udpTTL(data)
+	conn.Target = targetAddr
+	conn.PacketConn = rc
+	close(conn.Establishing)
+	p.nm.Unlock()
+
+	if err := rc.SetReadDeadline(time.Now().Add(conn.Timeout)); err != nil {
+		p.nm.RemoveIf(connIdent, conn)
+		return nil, conn, connIdent, fmt.Errorf("set UDP session deadline: %w", err)
+	}
+	relayOwnsRegistration = true
+	go func() {
+		defer p.wg.Done()
+		if e := p.relayUDPTo(lAddr, rc, targetAddr, conn.Timeout); e != nil && !errors.Is(e, net.ErrClosed) {
+			p.log.Tracef("shadowsocks.udp.relay: %v", e)
+		}
+		p.nm.RemoveIf(connIdent, conn)
+	}()
+	return rc, conn, connIdent, nil
+}
+
+func (p *Proxy) decrementUDPWaiter(conn *UDPConn) {
+	p.nm.Lock()
+	conn.waiters--
+	p.nm.Unlock()
+}
+
+func (p *Proxy) failUDPInitialization(connIdent string, conn *UDPConn, err error) {
+	p.nm.Lock()
+	current, ok := p.nm.Get(connIdent)
+	if ok && current == conn {
+		delete(p.nm.nm, connIdent)
+	}
+	conn.close(err)
+	p.nm.Unlock()
+}
+
+func (p *Proxy) relayUDP(laddr net.Addr, rConn net.PacketConn, timeout time.Duration) error {
+	var target net.Addr
+	if conn, ok := rConn.(interface{ RemoteAddr() net.Addr }); ok {
+		target = conn.RemoteAddr()
+	}
+	return p.relayUDPTo(laddr, rConn, target, timeout)
+}
+
+func (p *Proxy) relayUDPTo(laddr net.Addr, rConn net.PacketConn, target net.Addr, timeout time.Duration) (err error) {
+	buf := make([]byte, ip_mtu_trie.MTU)
+	if err := rConn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return fmt.Errorf("rConn.SetReadDeadline: %w", err)
+	}
 	var n int
 	for {
 		p.log.Tracef("readfrom...")
-		_ = rConn.SetReadDeadline(time.Now().Add(timeout))
-		n, _, err = rConn.ReadFrom(buf)
+		var source net.Addr
+		n, source, err = rConn.ReadFrom(buf)
 		if err != nil {
-			return fmt.Errorf("rConn.ReadFrom: %v", err)
+			return fmt.Errorf("rConn.ReadFrom: %w", err)
+		}
+		if n < 0 || n > len(buf) {
+			return fmt.Errorf("rConn.ReadFrom: invalid length %d", n)
+		}
+		if target != nil && !sameUDPAddress(source, target) {
+			continue
 		}
 		p.log.Tracef("readfrom: %v", buf[:n])
 		//var dmsg dnsmessage.Message
 		//if err := dmsg.Unpack(buf[:n]); err == nil {
 		//	p.log.Traceln(dmsg)
 		//}
-		_ = p.udpConn.SetWriteDeadline(time.Now().Add(DefaultNatTimeout)) // should keep consistent
-		_, err = p.udpConn.WriteTo(buf[:n], laddr)
+		udpConn := p.packetConn()
+		if udpConn == nil {
+			return ErrProxyClosed
+		}
+		if err = udpConn.SetWriteDeadline(time.Now().Add(DefaultNatTimeout)); err != nil {
+			return fmt.Errorf("set proxy UDP write deadline: %w", err)
+		}
+		var written int
+		written, err = udpConn.WriteTo(buf[:n], laddr)
 		if err != nil {
 			return
+		}
+		if written != n {
+			return io.ErrShortWrite
+		}
+		if err = rConn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return fmt.Errorf("rConn.SetReadDeadline: %w", err)
 		}
 	}
 }
 
+func (p *Proxy) writeToClient(data []byte, addr net.Addr) (int, error) {
+	conn := p.packetConn()
+	if conn == nil {
+		return 0, ErrProxyClosed
+	}
+	return conn.WriteTo(data, addr)
+}
+
+func sameUDPAddress(a, b net.Addr) bool {
+	aUDP, aOK := a.(*net.UDPAddr)
+	bUDP, bOK := b.(*net.UDPAddr)
+	if aOK && bOK {
+		return aUDP.Port == bUDP.Port && aUDP.Zone == bUDP.Zone && aUDP.IP.Equal(bUDP.IP)
+	}
+	return a != nil && b != nil && a.Network() == b.Network() && a.String() == b.String()
+}
+
 func forwardDNSMessage(tgt string, msg []byte) ([]byte, *dnsmessage.Message, error) {
-	conn, err := net.Dial("udp", tgt)
+	return forwardDNSMessageWithTimeout(tgt, msg, DnsQueryTimeout)
+}
+
+func (p *Proxy) forwardDNSMessage(tgt string, msg []byte) ([]byte, *dnsmessage.Message, error) {
+	return forwardDNSMessageWithDial(tgt, msg, DnsQueryTimeout, func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return p.dialTracked(p.ctx, network, address, timeout)
+	})
+}
+
+func forwardDNSMessageWithTimeout(tgt string, msg []byte, timeout time.Duration) ([]byte, *dnsmessage.Message, error) {
+	return forwardDNSMessageWithDial(tgt, msg, timeout, net.DialTimeout)
+}
+
+func forwardDNSMessageWithDial(tgt string, msg []byte, timeout time.Duration, dial func(string, string, time.Duration) (net.Conn, error)) ([]byte, *dnsmessage.Message, error) {
+	conn, err := dial("udp", tgt, timeout)
 	if err != nil {
 		return nil, nil, err
 	}
-	_, err = conn.Write(msg)
+	defer conn.Close()
+	if err = conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, nil, err
+	}
+	written, err := conn.Write(msg)
 	if err != nil {
 		return nil, nil, err
 	}
-	buf := make([]byte, 2+512) // see RFC 1035
+	if written != len(msg) {
+		return nil, nil, io.ErrShortWrite
+	}
+	buf := make([]byte, ip_mtu_trie.MTU)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, nil, err
@@ -276,6 +426,6 @@ func forwardDNSMessage(tgt string, msg []byte) ([]byte, *dnsmessage.Message, err
 	if err = resp.Unpack(buf[:n]); err != nil {
 		return nil, nil, err
 	}
-	return buf, &resp, nil
+	return buf[:n], &resp, nil
 
 }

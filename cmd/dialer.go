@@ -21,6 +21,8 @@ import (
 
 var UnableToConnectErr = fmt.Errorf("unable to connect to the proxy node")
 
+var selectSubscriptionNodeFromInput = selectNodeFromInput
+
 type DialerWithLatency struct {
 	Dialer  *dialer.Dialer
 	Latency int
@@ -67,6 +69,7 @@ func GetDialerFromLink(nodeLink string, opt *dialer.GlobalOption, testNode bool,
 	}
 	if testNode {
 		if ok, err := d.Test(context.Background(), testURL); !ok {
+			_ = d.Close()
 			return nil, fmt.Errorf("%w: %v", UnableToConnectErr, err)
 		}
 	}
@@ -110,6 +113,7 @@ func GetDialerFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, tes
 		if err != nil {
 			return nil, err
 		}
+		defer func() { closeDialersExcept(dialers, d) }()
 		var result []*DialerWithLatency
 		if testNode {
 			log.Warnln("Test nodes...")
@@ -126,11 +130,12 @@ func GetDialerFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, tes
 		if len(result) == 0 {
 			break
 		}
-		d, err := selectNodeFromInput(result)
+		selected, err := selectSubscriptionNodeFromInput(result)
 		if err != nil {
 			return nil, err
 		}
-		return d.Dialer, nil
+		d = selected.Dialer
+		return d, nil
 	default:
 		log.Warnf("Unexpected select option: %v. Fallback to \"first\".", config.ParamsObj.Subscription.Select)
 		fallthrough
@@ -148,10 +153,11 @@ func GetDialerFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, tes
 			}()
 		}
 		log.Infoln("Pulling the subscription...")
-			dialers, err := pullDialersFromSubscription(log, opt, config.ParamsObj.Subscription.Link, getProxyDialerForSubscription(opt))
+		dialers, err := pullDialersFromSubscription(log, opt, config.ParamsObj.Subscription.Link, getProxyDialerForSubscription(opt))
 		if err != nil {
 			return nil, err
 		}
+		defer func() { closeDialersExcept(dialers, d) }()
 		if testNode {
 			log.Infoln("Finding the first available node...")
 			if d = firstAvailableDialer(log, dialers, testURL); d != nil {
@@ -166,6 +172,24 @@ func GetDialerFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, tes
 		}
 	}
 	return nil, fmt.Errorf("cannot find any available node in your subscription, and you can try again with argument '-vv' to get more information")
+}
+
+func closeDialers(dialers []*dialer.Dialer) {
+	closeDialersExcept(dialers, nil)
+}
+
+func closeDialersExcept(dialers []*dialer.Dialer, keep *dialer.Dialer) {
+	closed := make(map[*dialer.Dialer]struct{}, len(dialers))
+	for _, d := range dialers {
+		if d == nil || d == keep {
+			continue
+		}
+		if _, ok := closed[d]; ok {
+			continue
+		}
+		closed[d] = struct{}{}
+		_ = d.Close()
+	}
 }
 
 func cacheSubscriptionNode(log *logrus.Logger, d *dialer.Dialer) error {

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofrs/uuid/v5"
 	jsoniter "github.com/json-iterator/go"
 
 	"github.com/mzz2017/gg/common"
@@ -87,13 +88,30 @@ func (s *V2Ray) ExportToURL() string {
 func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	u, err := url.Parse(vless)
 	if err != nil {
+		return nil, fmt.Errorf("%w: parse vless URL: %v", dialer.InvalidParameterErr, err)
+	}
+	hasPassword := false
+	if u.User != nil {
+		_, hasPassword = u.User.Password()
+	}
+	if u.Scheme != "vless" || u.User == nil || u.User.Username() == "" || hasPassword || u.Hostname() == "" {
+		return nil, fmt.Errorf("%w: unrecognized vless address", dialer.InvalidParameterErr)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("%w: invalid vless port", dialer.InvalidParameterErr)
+	}
+	if _, err := uuid.FromString(u.User.Username()); err != nil {
+		return nil, fmt.Errorf("%w: invalid vless UUID", dialer.InvalidParameterErr)
+	}
+	if err := validateVLESSFlow(u.Query().Get("flow")); err != nil {
 		return nil, err
 	}
 	data = &V2Ray{
 		Ps:            u.Fragment,
 		Add:           u.Hostname(),
 		Port:          u.Port(),
-		ID:            u.User.String(),
+		ID:            u.User.Username(),
 		Net:           u.Query().Get("type"),
 		Type:          u.Query().Get("headerType"),
 		SNI:           u.Query().Get("sni"),
@@ -120,14 +138,14 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	if data.TLS == "" {
 		data.TLS = "none"
 	}
-	if data.Flow == "" {
-		data.Flow = "xtls-rprx-direct"
-	}
 	return data, nil
 }
 
 // ParseVmessURL parses a vmess:// URL into V2Ray struct.
 func ParseVmessURL(vmess string) (data *V2Ray, err error) {
+	if !strings.HasPrefix(vmess, "vmess://") || len(vmess) <= len("vmess://") {
+		return nil, fmt.Errorf("%w: unrecognized vmess address", dialer.InvalidParameterErr)
+	}
 	var info V2Ray
 	raw, err := common.Base64StdDecode(vmess[8:])
 	if err != nil {
@@ -136,7 +154,7 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 	if err != nil {
 		u, err := url.Parse(vmess)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: parse vmess URL: %v", dialer.InvalidParameterErr, err)
 		}
 		re := regexp.MustCompile(`.*:(.+)@(.+):(\d+)`)
 		s := strings.Split(vmess[8:], "?")[0]
@@ -184,8 +202,12 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 	} else {
 		err = jsoniter.Unmarshal([]byte(raw), &info)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: decode vmess JSON: %v", dialer.InvalidParameterErr, err)
 		}
+	}
+	port, portErr := strconv.Atoi(info.Port)
+	if info.Add == "" || info.ID == "" || portErr != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("%w: vmess requires user, host, and valid port", dialer.InvalidParameterErr)
 	}
 	if strings.HasPrefix(info.Host, "/") && info.Path == "" {
 		info.Path = info.Host

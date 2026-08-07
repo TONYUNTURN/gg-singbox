@@ -8,6 +8,7 @@ func RegisterAll() {
 	// Shadowsocks
 	dialer.FromLinkRegister("ss", NewShadowsocks)
 	dialer.FromLinkRegister("shadowsocks", NewShadowsocks)
+	dialer.FromClashRegister("ss", NewShadowsocksFromClash)
 
 	// VMess / VLESS
 	dialer.FromLinkRegister("vmess", NewV2Ray)

@@ -54,6 +54,15 @@ func (d *Dialer) Link() string {
 	return d.link
 }
 
+// Close releases resources owned by dialers that have a lifecycle, such as a
+// sing-box Box. Dialers without a Close method require no cleanup.
+func (d *Dialer) Close() error {
+	if closer, ok := d.Dialer.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 func (d *Dialer) Test(ctx context.Context, url string) (bool, error) {
 	cd := ContextDialer{d.Dialer}
 	cli := http.Client{

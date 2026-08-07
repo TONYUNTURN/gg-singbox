@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/gofrs/uuid/v5"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
@@ -72,8 +73,8 @@ func buildV2RayDialer(s *V2Ray, protocol, link string) (*dialer.Dialer, error) {
 
 func buildVMessOutbound(s *V2Ray, tag string) (option.Outbound, error) {
 	portInt, err := strconv.Atoi(s.Port)
-	if err != nil {
-		return option.Outbound{}, fmt.Errorf("invalid port: %v", s.Port)
+	if s.Add == "" || s.ID == "" || err != nil || portInt < 1 || portInt > 65535 {
+		return option.Outbound{}, fmt.Errorf("%w: vmess requires user, host, and valid port", dialer.InvalidParameterErr)
 	}
 
 	opts := &option.VMessOutboundOptions{
@@ -96,8 +97,14 @@ func buildVMessOutbound(s *V2Ray, tag string) (option.Outbound, error) {
 
 func buildVLESSOutbound(s *V2Ray, tag string) (option.Outbound, error) {
 	portInt, err := strconv.Atoi(s.Port)
-	if err != nil {
-		return option.Outbound{}, fmt.Errorf("invalid port: %v", s.Port)
+	if s.Add == "" || err != nil || portInt < 1 || portInt > 65535 {
+		return option.Outbound{}, fmt.Errorf("%w: vless requires host and valid port", dialer.InvalidParameterErr)
+	}
+	if _, err := uuid.FromString(s.ID); err != nil {
+		return option.Outbound{}, fmt.Errorf("%w: invalid vless UUID", dialer.InvalidParameterErr)
+	}
+	if err := validateVLESSFlow(s.Flow); err != nil {
+		return option.Outbound{}, err
 	}
 
 	opts := &option.VLESSOutboundOptions{
@@ -116,6 +123,15 @@ func buildVLESSOutbound(s *V2Ray, tag string) (option.Outbound, error) {
 		Tag:     tag,
 		Options: opts,
 	}, nil
+}
+
+func validateVLESSFlow(flow string) error {
+	switch flow {
+	case "", "xtls-rprx-vision":
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported vless flow %q", dialer.InvalidParameterErr, flow)
+	}
 }
 
 func applyV2RayTransportToVMess(opts *option.VMessOutboundOptions, s *V2Ray) {

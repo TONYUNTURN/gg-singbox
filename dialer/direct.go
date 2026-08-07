@@ -1,6 +1,7 @@
 package dialer
 
 import (
+	"context"
 	"golang.org/x/net/proxy"
 	"net"
 )
@@ -39,6 +40,38 @@ func (d *direct) Dial(network, addr string) (c net.Conn, err error) {
 			}
 			return &directUDPConn{UDPConn: conn.(*net.UDPConn), FullCone: false}, nil
 		}
+	default:
+		return nil, net.UnknownNetworkError(network)
+	}
+}
+
+func (d *direct) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	switch network {
+	case "tcp":
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return d.netDialer.DialContext(ctx, network, addr)
+	case "udp":
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if d.fullCone {
+			conn, err := net.ListenUDP(network, nil)
+			if err != nil {
+				return nil, err
+			}
+			if err := ctx.Err(); err != nil {
+				_ = conn.Close()
+				return nil, err
+			}
+			return &directUDPConn{UDPConn: conn, FullCone: true}, nil
+		}
+		conn, err := d.netDialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return &directUDPConn{UDPConn: conn.(*net.UDPConn), FullCone: false}, nil
 	default:
 		return nil, net.UnknownNetworkError(network)
 	}

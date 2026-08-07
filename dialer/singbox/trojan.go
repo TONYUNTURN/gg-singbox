@@ -16,15 +16,18 @@ import (
 func NewTrojan(link string, opt *dialer.GlobalOption) (*dialer.Dialer, error) {
 	u, err := url.Parse(link)
 	if err != nil {
-		return nil, fmt.Errorf("parse trojan url: %w", err)
+		return nil, fmt.Errorf("%w: parse trojan URL: %v", dialer.InvalidParameterErr, err)
+	}
+	if (u.Scheme != "trojan" && u.Scheme != "trojan-go") || u.User == nil || u.User.Username() == "" || u.Hostname() == "" {
+		return nil, fmt.Errorf("%w: trojan requires user, host, and port", dialer.InvalidParameterErr)
 	}
 
 	port, err := strconv.Atoi(u.Port())
-	if err != nil {
-		return nil, fmt.Errorf("invalid port: %w", err)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("%w: invalid trojan port", dialer.InvalidParameterErr)
 	}
 
-	password := u.User.String()
+	password := u.User.Username()
 	name := u.Fragment
 	sni := u.Query().Get("sni")
 	if sni == "" {

@@ -15,15 +15,18 @@ import (
 func NewHysteria2(link string, opt *dialer.GlobalOption) (*dialer.Dialer, error) {
 	u, err := url.Parse(link)
 	if err != nil {
-		return nil, fmt.Errorf("parse hysteria2 url: %w", err)
+		return nil, fmt.Errorf("%w: parse hysteria2 URL: %v", dialer.InvalidParameterErr, err)
+	}
+	if (u.Scheme != "hysteria2" && u.Scheme != "hy2") || u.User == nil || u.User.Username() == "" || u.Hostname() == "" {
+		return nil, fmt.Errorf("%w: hysteria2 requires user, host, and port", dialer.InvalidParameterErr)
 	}
 
 	port, err := strconv.Atoi(u.Port())
-	if err != nil {
-		return nil, fmt.Errorf("invalid port: %w", err)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("%w: invalid hysteria2 port", dialer.InvalidParameterErr)
 	}
 
-	password := u.User.String()
+	password := u.User.Username()
 	name := u.Fragment
 	sni := u.Query().Get("sni")
 	if sni == "" {

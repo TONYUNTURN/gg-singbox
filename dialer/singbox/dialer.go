@@ -14,7 +14,7 @@ import (
 
 // SingBoxDialer wraps a sing-box adapter.Outbound as a gg dialer.Dialer.
 type SingBoxDialer struct {
-	outbound   adapter.Outbound
+	outbound   singBoxOutbound
 	supportUDP bool
 	box        interface{ Close() error }
 	name       string
@@ -22,8 +22,19 @@ type SingBoxDialer struct {
 	link       string
 }
 
+type singBoxOutbound interface {
+	Tag() string
+	Network() []string
+	DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error)
+	ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error)
+}
+
 // NewSingBoxDialer creates a SingBoxDialer from a sing-box outbound.
 func NewSingBoxDialer(outbound adapter.Outbound, box interface{ Close() error }, name, protocol, link string) *dialer.Dialer {
+	return newSingBoxDialer(outbound, box, name, protocol, link)
+}
+
+func newSingBoxDialer(outbound singBoxOutbound, box interface{ Close() error }, name, protocol, link string) *dialer.Dialer {
 	supportUDP := false
 	for _, netw := range outbound.Network() {
 		if netw == N.NetworkUDP {
@@ -44,7 +55,12 @@ func NewSingBoxDialer(outbound adapter.Outbound, box interface{ Close() error },
 
 // Dial implements proxy.Dialer.
 func (d *SingBoxDialer) Dial(network, addr string) (net.Conn, error) {
-	ctx := context.Background()
+	return d.DialContext(context.Background(), network, addr)
+}
+
+// DialContext dials through the sing-box outbound while preserving caller
+// cancellation, which is required by bounded HTTP subscription requests.
+func (d *SingBoxDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	socksaddr := M.ParseSocksaddr(addr)
 
 	switch network {

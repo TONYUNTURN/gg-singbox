@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	maxSubscriptionBodySize = 1 << 20
+	subscriptionHTTPTimeout = 30 * time.Second
 )
 
 type ClashConfig struct {
@@ -41,37 +47,35 @@ type SIP008Server struct {
 
 func resolveSubscriptionAsClash(log *logrus.Logger, opt *dialer.GlobalOption, b []byte) (dialers []*dialer.Dialer, err error) {
 	log.Traceln("try to resolve as Clash")
-
-	// base64 decode
-	raw, e := common.Base64StdDecode(string(b))
-	if e != nil {
-		raw, _ = common.Base64URLDecode(string(b))
-	}
+	b = normalizeSubscriptionInput(b)
 
 	var conf ClashConfig
-	if err = yaml.NewDecoder(strings.NewReader(raw)).Decode(&conf); err != nil {
+	if err = yaml.NewDecoder(strings.NewReader(string(b))).Decode(&conf); err != nil {
 		return nil, err
+	}
+	if len(conf.Proxy) == 0 {
+		return nil, fmt.Errorf("does not seem like a Clash subscription")
 	}
 	for i, node := range conf.Proxy {
 		d, e := dialer.NewFromClash(&node, opt)
 		if e != nil {
+			if d != nil {
+				_ = d.Close()
+			}
 			log.Tracef("proxies[%v]: %v\n", i, e)
 			continue
 		}
 		dialers = append(dialers, d)
 	}
+	if len(dialers) == 0 {
+		return nil, fmt.Errorf("Clash subscription contains no supported nodes")
+	}
 	return dialers, nil
 }
 
-func resolveSubscriptionAsBase64(log *logrus.Logger, opt *dialer.GlobalOption, b []byte) (dialers []*dialer.Dialer) {
-	log.Traceln("try to resolve as base64")
-
-	// base64 decode
-	raw, e := common.Base64StdDecode(string(b))
-	if e != nil {
-		raw, _ = common.Base64URLDecode(string(b))
-	}
-	lines := strings.Split(raw, "\n")
+func resolveSubscriptionAsLinks(log *logrus.Logger, opt *dialer.GlobalOption, b []byte) (dialers []*dialer.Dialer, err error) {
+	b = normalizeSubscriptionInput(b)
+	lines := strings.Split(string(b), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if len(line) == 0 {
@@ -79,26 +83,58 @@ func resolveSubscriptionAsBase64(log *logrus.Logger, opt *dialer.GlobalOption, b
 		}
 		d, e := GetDialerFromLink(line, opt, false, "")
 		if e != nil {
-			log.Tracef("%v: %v\n", e, line)
+			if d != nil {
+				_ = d.Close()
+			}
+			log.Tracef("invalid share link: %v", e)
 			continue
 		}
 		dialers = append(dialers, d)
 	}
-	return dialers
+	if len(dialers) == 0 {
+		return nil, fmt.Errorf("subscription contains no supported share links")
+	}
+	return dialers, nil
+}
+
+func resolveSubscriptionAsBase64(log *logrus.Logger, opt *dialer.GlobalOption, b []byte) ([]*dialer.Dialer, error) {
+	log.Traceln("try to resolve as base64")
+	b = normalizeSubscriptionInput(b)
+
+	raw, err := common.Base64StdDecode(string(b))
+	if err != nil {
+		raw, err = common.Base64URLDecode(string(b))
+		if err != nil {
+			return nil, fmt.Errorf("decode base64 subscription: %w", err)
+		}
+	}
+	decoded := []byte(raw)
+	if dialers, err := resolveSubscriptionAsSIP008(log, opt, decoded); err == nil {
+		return dialers, nil
+	}
+	if dialers, err := resolveSubscriptionAsClash(log, opt, decoded); err == nil {
+		return dialers, nil
+	}
+	return resolveSubscriptionAsLinks(log, opt, decoded)
 }
 
 func resolveSubscriptionAsSIP008(log *logrus.Logger, opt *dialer.GlobalOption, b []byte) (dialers []*dialer.Dialer, err error) {
 	log.Traceln("try to resolve as SIP008")
+	b = normalizeSubscriptionInput(b)
 
 	var sip SIP008
 	err = json.Unmarshal(b, &sip)
 	if err != nil {
 		return
 	}
-	if sip.Version != 1 || sip.Servers == nil {
-		return nil, fmt.Errorf("does not seems like a SIP008 subscription")
+	if sip.Version != 1 || len(sip.Servers) == 0 {
+		return nil, fmt.Errorf("does not seem like a SIP008 subscription")
 	}
 	for i, server := range sip.Servers {
+		if server.Server == "" || server.ServerPort < 1 || server.ServerPort > 65535 || server.Method == "" || server.Password == "" {
+			log.Tracef("servers[%v]: missing required Shadowsocks fields", i)
+			continue
+		}
 		u := url.URL{
 			Scheme:   "ss",
 			User:     url.UserPassword(server.Method, server.Password),
@@ -108,46 +144,102 @@ func resolveSubscriptionAsSIP008(log *logrus.Logger, opt *dialer.GlobalOption, b
 		}
 		d, e := dialer.NewFromLink("shadowsocks", u.String(), opt)
 		if e != nil {
+			if d != nil {
+				_ = d.Close()
+			}
 			log.Tracef("servers[%v]: %v\n", i, e)
 			continue
 		}
 		dialers = append(dialers, d)
 	}
-	return
+	if len(dialers) == 0 {
+		return nil, fmt.Errorf("SIP008 subscription contains no supported nodes")
+	}
+	return dialers, nil
+}
+
+// resolveSubscription parses subscription content without fetching it. It is
+// the deterministic seam used by tests and by the HTTP subscription path.
+func resolveSubscription(log *logrus.Logger, opt *dialer.GlobalOption, b []byte) ([]*dialer.Dialer, error) {
+	b = normalizeSubscriptionInput(b)
+	dialers, sipErr := resolveSubscriptionAsSIP008(log, opt, b)
+	if sipErr == nil {
+		return dialers, nil
+	}
+	dialers, clashErr := resolveSubscriptionAsClash(log, opt, b)
+	if clashErr == nil {
+		return dialers, nil
+	}
+	dialers, linksErr := resolveSubscriptionAsLinks(log, opt, b)
+	if linksErr == nil {
+		return dialers, nil
+	}
+	dialers, base64Err := resolveSubscriptionAsBase64(log, opt, b)
+	if base64Err == nil {
+		return dialers, nil
+	}
+	return nil, fmt.Errorf("unrecognized subscription (SIP008: %v; Clash: %v; links: %v; Base64: %w)", sipErr, clashErr, linksErr, base64Err)
+}
+
+func normalizeSubscriptionInput(b []byte) []byte {
+	b = bytes.TrimSpace(b)
+	b = bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf})
+	return bytes.TrimSpace(b)
 }
 
 func pullDialersFromSubscription(log *logrus.Logger, opt *dialer.GlobalOption, subscription string, proxyDialer *dialer.Dialer) (dialers []*dialer.Dialer, err error) {
 	var client *http.Client
+	var transport *http.Transport
 	if proxyDialer != nil {
-		client = &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return proxyDialer.Dial(network, addr)
-				},
+		defer proxyDialer.Close()
+		contextDialer, ok := proxyDialer.Dialer.(interface {
+			DialContext(context.Context, string, string) (net.Conn, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("subscription proxy dialer does not support cancellation")
+		}
+		transport = &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return contextDialer.DialContext(ctx, network, addr)
 			},
-			Timeout: 30 * time.Second,
+		}
+		client = &http.Client{
+			Transport: transport,
+			Timeout:   subscriptionHTTPTimeout,
 		}
 	} else {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: subscriptionHTTPTimeout}
 	}
-	resp, err := client.Get(subscription)
+	if transport != nil {
+		defer transport.CloseIdleConnections()
+	}
+	return pullDialersFromSubscriptionWithClient(log, opt, subscription, client)
+}
+
+func pullDialersFromSubscriptionWithClient(log *logrus.Logger, opt *dialer.GlobalOption, subscription string, client *http.Client) ([]*dialer.Dialer, error) {
+	if client == nil {
+		return nil, fmt.Errorf("subscription HTTP client is nil")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), subscriptionHTTPTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subscription, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create subscription request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch subscription: %w", err)
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("fetch subscription: unexpected HTTP status %s", resp.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxSubscriptionBodySize+1))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read subscription response: %w", err)
 	}
-	if dialers, err = resolveSubscriptionAsSIP008(log, opt, b); err == nil {
-		return dialers, nil
-	} else {
-		log.Traceln(err)
+	if len(b) > maxSubscriptionBodySize {
+		return nil, fmt.Errorf("subscription response exceeds %d bytes", maxSubscriptionBodySize)
 	}
-	if dialers, err = resolveSubscriptionAsClash(log, opt, b); err == nil {
-		return dialers, nil
-	} else {
-		log.Traceln(err)
-	}
-	return resolveSubscriptionAsBase64(log, opt, b), nil
+	return resolveSubscription(log, opt, b)
 }
